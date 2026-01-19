@@ -11,6 +11,7 @@ import tempfile
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, HttpUrl
 from requests import Response  # type: ignore
+from requests_file import FileAdapter  # type: ignore
 
 import requests
 
@@ -185,9 +186,11 @@ async def parse(request: OcrRequest) -> OcrResponse:
     :type request: DolphinRequest
     """
 
-    results: List[List[Dict[str, Any]]] = []
+    results: List[Dict[str, Any]] = []
 
     with tempfile.TemporaryDirectory() as workspace:
+        session: requests.Session = requests.Session()
+        session.mount('file://', FileAdapter())
         for document in request.documents:
             # Extract the file name from the URL.
             name: str = Path(document.url.path or "document.pdf").name
@@ -195,7 +198,7 @@ async def parse(request: OcrRequest) -> OcrResponse:
             path: Path = Path(workspace) / name
 
             # Download the file.
-            response: Response = requests.get(
+            response: Response = session.get(
                 document.url.encoded_string(),
                 stream=True,
                 timeout=60.0)
@@ -208,7 +211,7 @@ async def parse(request: OcrRequest) -> OcrResponse:
 
             pdf: PortableDocumentFormat = PortableDocumentFormat(path)
             try:
-                results.append(ocr.process(pdf))
+                results.extend(ocr.process(pdf))
             except Exception as error:
                 logging.error(error)
             finally:
