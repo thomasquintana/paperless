@@ -307,8 +307,6 @@ class OpticalCharaterRecognizer:
 
         for coordinates, label, meta in layout:
             pip: PILImage = image.crop(coordinates)  # type: ignore
-
-            # 
             if pip.size[0] > MIN_PIP_WIDTH and pip.size[1] > MIN_PIP_HEIGHT:
                 descriptor: Dict[str, Any] = {
                     "image": pip,

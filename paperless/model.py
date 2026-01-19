@@ -41,8 +41,8 @@ class Dolphin:
 
         :param self: Description
         """
-        messages: List[Dict[str, Any]] = [
-            message.model_dump() for message in context]
+        messages: List[List[Dict[str, Any]]] = [
+            [message.model_dump()] for message in context]
 
         # Apply the template to the text inputs.
         texts: List[str] = self._processor.apply_chat_template(
