@@ -96,4 +96,6 @@ async def parse(request: OcrRequest) -> OcrResponse:
             finally:
                 pdf.close()
 
+    print(results)
+
     raise NotImplementedError()
