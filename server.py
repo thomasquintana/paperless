@@ -67,6 +67,23 @@ class ElementPart(BaseModel):
     )
 
 
+class LocalDocumentPart(BaseModel):
+    """
+    Represents a reference to a local document used as model input.
+
+    This model describes a single document that is not included directly in
+    the request payload, but is instead referenced by a URL. The document is
+    expected to be retrievable by the inference service at request time.
+    """
+    url: Path = Field(
+        description="Publicly reachable URL of the document.")
+    kind: Literal["url"] = Field(
+        "url", alias="type", description="Document source type.")
+
+    class Config:
+        populate_by_name = True
+
+
 class PagePart(BaseModel):
     """
     Normalized OCR output for a single PDF page.
@@ -217,4 +234,4 @@ async def parse(request: OcrRequest) -> OcrResponse:
             finally:
                 pdf.close()
 
-    return OcrResponse.model_validate(results)
+    return OcrResponse.model_validate({"pages": results})
