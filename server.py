@@ -18,6 +18,106 @@ from paperless.ocr import OpticalCharaterRecognizer
 from paperless.preprocessor.pdf import PortableDocumentFormat
 
 
+class ElementPart(BaseModel):
+    """
+    Normalized OCR output for a single detected page element.
+
+    This model is the per-region payload produced after:
+      1) the page-level layout step assigns a label + bounding box, and
+      2) the element-level extractor returns either text
+        (code/equations/tables/text) or base64-encoded PNG image data
+        (figures).
+
+    Fields are intentionally generic so callers can store/serialize results
+    uniformly regardless of element type.
+    """
+
+    # Semantic element label predicted by the layout/reading-order step.
+    # Common values: "code", "equ", "fig", "tab", "text", "distorted_page".
+    label: str = Field(description="Semantic element type label.")
+
+    # Bounding box coordinates in page pixel space: [x1, y1, x2, y2].
+    # These coordinates correspond to the crop region taken from the page
+    # image.
+    bbox: List[float] = Field(
+        description="Bounding box in page pixel coordinates: [x1, y1, x2, y2]."
+    )
+
+    # Extracted content for the region:
+    # - For code/equations/tables/text: the extracted text.
+    # - For figures: base64-encoded PNG bytes for the cropped region.
+    text: str = Field(
+        description="Extracted text, or base64 PNG data when label == 'fig'."
+    )
+
+    # Reading order index assigned during layout iteration.
+    # This provides a stable ordering within the page
+    # (0-based in current pipeline).
+    reading_order: int = Field(
+        description="Stable per-page reading order index assigned during "
+                    "layout iteration."
+    )
+
+    # Optional metadata tags produced by the layout parser (e.g., style hints,
+    # section markers, or other model-provided attributes).
+    tags: List[str] = Field(
+        default_factory=list,
+        description="Optional metadata tags associated with the element."
+    )
+
+
+class PagePart(BaseModel):
+    """
+    Normalized OCR output for a single PDF page.
+
+    This model groups extracted element regions by their semantic type, while
+    keeping per-element bounding boxes and reading order available for
+    downstream reconstruction, indexing, or re-rendering.
+
+    The lists are populated from the orchestrator's routing logic:
+      - codes: label == "code"
+      - equations: label == "equ"
+      - figures: label == "fig" (ElementPart.text is base64 PNG)
+      - tables: label == "tab"
+      - text: everything else (including any fallback "distorted_page" region)
+    """
+
+    # 1-based page number in the original PDF.
+    page: int = Field(
+        description="1-based page index within the PDF document.")
+
+    # Extracted code regions found on the page.
+    codes: List[ElementPart] = Field(
+        default_factory=list,
+        description="List of extracted code elements for this page."
+    )
+
+    # Extracted equation/formula regions found on the page.
+    equations: List[ElementPart] = Field(
+        default_factory=list,
+        description="List of extracted equation elements for this page."
+    )
+
+    # Extracted figure regions found on the page (base64 PNG data).
+    figures: List[ElementPart] = Field(
+        default_factory=list,
+        description="List of extracted figure elements for this page "
+                    "(base64 PNG in ElementPart.text)."
+    )
+
+    # Extracted table regions found on the page.
+    tables: List[ElementPart] = Field(
+        default_factory=list,
+        description="List of extracted table elements for this page."
+    )
+
+    # Extracted plain-text regions found on the page.
+    text: List[ElementPart] = Field(
+        default_factory=list,
+        description="List of extracted text elements for this page."
+    )
+
+
 class RemoteDocumentPart(BaseModel):
     """
     Represents a reference to a remotely hosted document used as model input.
@@ -48,9 +148,28 @@ class OcrRequest(BaseModel):
 
 class OcrResponse(BaseModel):
     """
-    Top-level response model for optical character recognition.
+    Top-level OCR response container.
+
+    This model represents the full, normalized output of the OCR pipeline
+    for an entire document. It is intentionally minimal and stable so it
+    can serve as a long-lived API contract between the OCR service and
+    downstream consumers (indexers, search, vectorization, UI renderers,
+    etc.).
+
+    The response is organized hierarchically:
+      - The document consists of one or more pages.
+      - Each page contains grouped OCR elements (code, equations, figures,
+        tables, and text).
+      - Each element includes bounding box coordinates, reading order, tags,
+        and extracted content.
+
+    The ordering of `pages` reflects the original PDF page order (1 → N).
     """
-    pass
+
+    # Ordered list of OCR results, one entry per PDF page.
+    pages: List[PagePart] = Field(
+        description="Ordered list of per-page OCR results for the document."
+    )
 
 
 ocr: OpticalCharaterRecognizer = OpticalCharaterRecognizer()
@@ -87,7 +206,6 @@ async def parse(request: OcrRequest) -> OcrResponse:
                     if chunk is not None:
                         output.write(chunk)
 
-            # 
             pdf: PortableDocumentFormat = PortableDocumentFormat(path)
             try:
                 results.append(ocr.process(pdf))
@@ -96,6 +214,4 @@ async def parse(request: OcrRequest) -> OcrResponse:
             finally:
                 pdf.close()
 
-    print(results)
-
-    raise NotImplementedError()
+    return OcrResponse.model_validate(results)
