@@ -1,5 +1,5 @@
 """
-Docstring for model
+Pydantic message schema for Dolphin-v2 chat-style prompts.
 """
 
 from typing import Any, List, Literal
@@ -39,7 +39,7 @@ class TextPart(BaseModel):
     )
 
     # The text string.
-    text: str = Field(description="")
+    text: str = Field(description="Text content for this part.")
 
 
 class Message(BaseModel):
@@ -47,13 +47,12 @@ class Message(BaseModel):
     Represents a single message in a Dolphin inference request.
 
     Messages follow a chat-style structure. In this simplified schema,
-    only 'user' messages are supported, and each message may contain
-    one or more image parts.
+    each message may contain one or more image parts.
     """
 
     # Role of the message sender.
     role: Literal["assistant", "user", "system"] = Field(
-        description="Role of the message sender. Must be 'user'."
+        description="Role of the message sender for chat-style prompts."
     )
 
     # Ordered list of content parts associated with this message

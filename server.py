@@ -2,21 +2,48 @@
 OCR inference server.
 """
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import unquote
 
 import logging
 import tempfile
 
 from fastapi import FastAPI
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import AnyUrl, BaseModel, Field
 from requests import Response  # type: ignore
 from requests_file import FileAdapter  # type: ignore
 
+import boto3
 import requests
 
 from paperless.ocr import OpticalCharaterRecognizer
 from paperless.preprocessor.pdf import PortableDocumentFormat
+
+
+class DocumentPart(BaseModel):
+    """
+    Represents a reference to a document used as model input.
+
+    This model describes a single document that is not included directly in
+    the request payload, but is instead referenced by a URL. The document is
+    expected to be retrievable by the inference service at request time, using
+    schemes like https, s3, or file (when available on the host).
+    """
+    url: AnyUrl = Field(
+        description="Publicly reachable URL of the document.")
+    kind: Literal["url"] = Field(
+        "url", alias="type", description="Document source type.")
+    exclude: Optional[List[Literal['code',
+                                   'equations',
+                                   'figures',
+                                   'tables',
+                                   'text']]] = Field(
+        description="A list of element types to exclude.",
+        default=None
+    )
+
+    class Config:
+        populate_by_name = True
 
 
 class ElementPart(BaseModel):
@@ -65,23 +92,6 @@ class ElementPart(BaseModel):
         default_factory=list,
         description="Optional metadata tags associated with the element."
     )
-
-
-class LocalDocumentPart(BaseModel):
-    """
-    Represents a reference to a local document used as model input.
-
-    This model describes a single document that is not included directly in
-    the request payload, but is instead referenced by a URL. The document is
-    expected to be retrievable by the inference service at request time.
-    """
-    url: Path = Field(
-        description="Publicly reachable URL of the document.")
-    kind: Literal["url"] = Field(
-        "url", alias="type", description="Document source type.")
-
-    class Config:
-        populate_by_name = True
 
 
 class PagePart(BaseModel):
@@ -136,30 +146,13 @@ class PagePart(BaseModel):
     )
 
 
-class RemoteDocumentPart(BaseModel):
-    """
-    Represents a reference to a remotely hosted document used as model input.
-
-    This model describes a single document that is not included directly in
-    the request payload, but is instead referenced by a URL. The document is
-    expected to be retrievable by the inference service at request time.
-    """
-    url: HttpUrl = Field(
-        description="Publicly reachable URL of the document.")
-    kind: Literal["url"] = Field(
-        "url", alias="type", description="Document source type.")
-
-    class Config:
-        populate_by_name = True
-
-
 class OcrRequest(BaseModel):
     """
     Top-level request model for optical character recognition.
     """
     model: Literal["dolphin2"] = Field(
         description="Model to use.")
-    documents: List[RemoteDocumentPart] = Field(
+    documents: List[DocumentPart] = Field(
         description="One or more documents to process."
     )
 
@@ -197,10 +190,10 @@ server: FastAPI = FastAPI()
 @server.post("/v1/ocr")
 async def parse(request: OcrRequest) -> OcrResponse:
     """
-    Docstring for parse
+    Run the OCR pipeline on one or more documents.
 
-    :param request: Description
-    :type request: DolphinRequest
+    Downloads each document to a temporary workspace, renders pages to images,
+    runs layout + element extraction, and returns normalized per-page results.
     """
 
     results: List[Dict[str, Any]] = []
@@ -215,20 +208,29 @@ async def parse(request: OcrRequest) -> OcrResponse:
             path: Path = Path(workspace) / name
 
             # Download the file.
-            response: Response = session.get(
-                document.url.encoded_string(),
-                stream=True,
-                timeout=60.0)
-            response.raise_for_status()
+            if document.url.scheme == "s3":
+                bucket_name: Optional[str] = document.url.host
+                object_key: Optional[str] = document.url.path
+                if object_key is not None:
+                    object_key = object_key.lstrip('/')
 
-            with path.open("wb") as output:
-                for chunk in response.iter_content(chunk_size=1024 * 64):
-                    if chunk is not None:
-                        output.write(chunk)
+                s3_client = boto3.client('s3')
+                s3_client.download_file(bucket_name, object_key, path)
+            else:
+                response: Response = session.get(
+                    document.url.encoded_string(),
+                    stream=True,
+                    timeout=60.0)
+                response.raise_for_status()
+
+                with path.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=1024 * 64):
+                        if chunk is not None:
+                            output.write(chunk)
 
             pdf: PortableDocumentFormat = PortableDocumentFormat(path)
             try:
-                results.extend(ocr.process(pdf))
+                results.extend(ocr.process(pdf, document.exclude))
             except Exception as error:
                 logging.error(error)
             finally:

@@ -17,7 +17,7 @@ Design notes:
   pointless model calls.
 """
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Self, Tuple
+from typing import Any, Dict, List, Literal, Optional, Self, Tuple
 
 import base64
 import logging
@@ -376,7 +376,12 @@ class OpticalCharaterRecognizer:
 
     def process(
         self: Self,
-        pdf: PortableDocumentFormat
+        pdf: PortableDocumentFormat,
+        exclude: Optional[List[Literal['code',
+                                       'equations',
+                                       'figures',
+                                       'tables',
+                                       'text']]] = None
     ) -> List[Dict[str, Any]]:
         """
         Perform OCR over every page in a PDF document.
@@ -390,6 +395,7 @@ class OpticalCharaterRecognizer:
         Args:
             pdf: A PortableDocumentFormat wrapper capable of rendering pages
                 into images.
+            exclude: A list of page elements to exclude from the results.
 
         Returns:
             List of OCR results across all pages.
@@ -404,13 +410,27 @@ class OpticalCharaterRecognizer:
                 image)
 
             # Stage 2: Process the elements.
+            if exclude is None:
+                exclude = []
+
+            code: List[Dict[str, Any]] = self._extract_codes(
+                elements[0]) if 'code' not in exclude else []
+            equations: List[Dict[str, Any]] = self._extract_equations(
+                elements[1]) if 'equations' not in exclude else []
+            figures: List[Dict[str, Any]] = self._extract_figures(
+                elements[2]) if 'figures' not in exclude else []
+            tables: List[Dict[str, Any]] = self._extract_tables(
+                elements[3]) if 'tables' not in exclude else []
+            text: List[Dict[str, Any]] = self._extract_text(
+                elements[4]) if 'text' not in exclude else []
+
             outputs.append({
                 "page": index + 1,
-                "codes": self._extract_codes(elements[0]),
-                "equations": self._extract_equations(elements[1]),
-                "figures": self._extract_figures(elements[2]),
-                "tables": self._extract_tables(elements[3]),
-                "text": self._extract_text(elements[4])
+                "codes": code,
+                "equations": equations,
+                "figures": figures,
+                "tables": tables,
+                "text": text
             })
 
         return outputs

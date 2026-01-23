@@ -2,8 +2,9 @@ Paperless OCR Service
 =====================
 
 FastAPI service that runs the Dolphin-v2 OCR pipeline against PDF documents
-reachable by URL. The server downloads each PDF, renders pages to images, runs
-layout + element extraction, and returns normalized OCR results grouped by page.
+reachable by URL or S3. The server downloads each PDF, renders pages to images,
+runs layout + element extraction, and returns normalized OCR results grouped by
+page.
 
 Highlights
 ----------
@@ -50,9 +51,10 @@ Request body:
 ```
 
 Notes:
-- The server downloads the document from the provided URL. Local file paths are
-  not supported by this endpoint.
-- The `type` field must be `url` (alias for `RemoteDocumentPart.kind`).
+- The server downloads the document from the provided URL or S3 URI. `file://`
+  URLs are supported only when the file is accessible on the server host.
+- The `type` field must be `url` (alias for `DocumentPart.kind`).
+- Use `exclude` to skip element types you do not need (e.g., `["figures"]`).
 
 Response shape:
 ```json

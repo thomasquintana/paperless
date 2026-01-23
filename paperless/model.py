@@ -1,5 +1,5 @@
 """
-Docstring for model
+Model wrapper for Dolphin-v2 (Qwen2.5-VL) OCR inference.
 """
 
 from typing import Any, Dict, List, Self, Tuple
@@ -16,7 +16,10 @@ from paperless.message import Message
 
 class Dolphin:
     """
-    Docstring for Dolphin
+    Inference wrapper for the Dolphin-v2 vision-language model.
+
+    Responsible for loading the model + processor, moving to GPU when
+    available, and generating text outputs from chat-style inputs.
     """
     def __init__(self: Self) -> None:
         # Load model.
@@ -37,9 +40,14 @@ class Dolphin:
 
     def generate(self: Self, context: List[Message]) -> List[str]:
         """
-        Docstring for generate
+        Generate text responses for a batch of message contexts.
 
-        :param self: Description
+        Args:
+            context: List of Message objects representing a single prompt
+                sequence with image and text parts.
+
+        Returns:
+            List of decoded model outputs, one per context.
         """
         messages: List[List[Dict[str, Any]]] = [
             [message.model_dump()] for message in context]
