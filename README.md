@@ -37,7 +37,7 @@ API
 ---
 `POST /v1/ocr`
 
-Request body:
+HTTP(S) file example:
 ```json
 {
   "model": "dolphin2",
@@ -45,6 +45,46 @@ Request body:
     {
       "type": "url",
       "url": "https://example.com/document.pdf"
+    }
+  ]
+}
+```
+
+Local file example:
+```json
+{
+  "model": "dolphin2",
+  "documents": [
+    {
+      "type": "url",
+      "url": "file:///var/data/document.pdf"
+    }
+  ]
+}
+```
+
+S3 example:
+```json
+{
+  "model": "dolphin2",
+  "documents": [
+    {
+      "type": "url",
+      "url": "s3://my-bucket/path/to/document.pdf"
+    }
+  ]
+}
+```
+
+Exclude elements example:
+```json
+{
+  "model": "dolphin2",
+  "documents": [
+    {
+      "type": "url",
+      "url": "https://example.com/document.pdf",
+      "exclude": ["figures", "tables"]
     }
   ]
 }

@@ -13,7 +13,7 @@ from pydantic import AnyUrl, BaseModel, Field
 from requests import Response  # type: ignore
 from requests_file import FileAdapter  # type: ignore
 
-import boto3
+import boto3  # type: ignore
 import requests
 
 from paperless.ocr import OpticalCharaterRecognizer
