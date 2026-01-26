@@ -4,6 +4,8 @@ Model wrapper for Dolphin-v2 (Qwen2.5-VL) OCR inference.
 
 from typing import Any, Dict, List, Self, Tuple
 
+import logging
+
 from PIL.Image import Image as PILImage
 from qwen_vl_utils import process_vision_info  # type: ignore
 from transformers import AutoProcessor  # type: ignore
@@ -22,21 +24,41 @@ class Dolphin:
     available, and generating text outputs from chat-style inputs.
     """
     def __init__(self: Self) -> None:
+        # Initialize logging.
+        self._logger = logging.getLogger("uvicorn.error")
+
         # Load model.
         self._model: Qwen2_5_VLForConditionalGeneration = \
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 "ByteDance/Dolphin-v2")
         self._model.eval()  # type: ignore
 
+        if self._logger.isEnabledFor(logging.INFO):
+            self._logger.info("Loaded the ByteDance/Dolphin-v2.")
+
         # Load the preprocessor.
         self._processor: Any = AutoProcessor.from_pretrained(
             "ByteDance/Dolphin-v2", use_fast=False)
         self._processor.tokenizer.padding_side = "left"
 
+        if self._logger.isEnabledFor(logging.INFO):
+            self._logger.info("Loaded the ByteDance/Dolphin-v2 processor.")
+
         # Move the model to the GPU if CUDA is available.
         if torch.cuda.is_available():
+            if self._logger.isEnabledFor(logging.INFO):
+                self._logger.info("The NVidia CUDA runtime was detected.")
+
             self._model.to("cuda")  # type: ignore
             self._model = self._model.bfloat16()  # type: ignore
+
+            if self._logger.isEnabledFor(logging.INFO):
+                self._logger.info("Moved the ByteDance/Dolphin-v2 model to "
+                                  "the accelerator memory.")
+        else:
+            if self._logger.isEnabledFor(logging.INFO):
+                self._logger.info("The NVidia CUDA runtime was not detected. "
+                                  "Using the CPU for inference.")
 
     def generate(self: Self, context: List[Message]) -> List[str]:
         """
