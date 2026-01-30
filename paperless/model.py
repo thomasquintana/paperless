@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Self, Tuple
 
 import logging
 
-from deepspeed import InferenceEngine
+from deepspeed import InferenceEngine  # type: ignore
 from PIL.Image import Image as PILImage
 from qwen_vl_utils import process_vision_info  # type: ignore
 from transformers import AutoProcessor  # type: ignore
