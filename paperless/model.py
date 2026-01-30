@@ -6,11 +6,13 @@ from typing import Any, Dict, List, Self, Tuple
 
 import logging
 
+from deepspeed import InferenceEngine
 from PIL.Image import Image as PILImage
 from qwen_vl_utils import process_vision_info  # type: ignore
 from transformers import AutoProcessor  # type: ignore
 from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
 
+import deepspeed
 import torch
 
 from paperless.message import Message
@@ -28,37 +30,46 @@ class Dolphin:
         self._logger = logging.getLogger("uvicorn.error")
 
         # Load model.
-        self._model: Qwen2_5_VLForConditionalGeneration = \
+        device_map = "cuda" if torch.cuda.is_available() else "cpu"
+        torch_dtype = torch.bfloat16 if torch.cuda.is_available() else "auto"
+
+        self._model: Qwen2_5_VLForConditionalGeneration | InferenceEngine = \
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
-                "ByteDance/Dolphin-v2")
+                "ByteDance/Dolphin-v2",
+                device_map=device_map,
+                torch_dtype=torch_dtype
+            )
         self._model.eval()  # type: ignore
 
         if self._logger.isEnabledFor(logging.INFO):
-            self._logger.info("Loaded the ByteDance/Dolphin-v2.")
+            self._logger.info(
+                "Loaded ByteDance/Dolphin-v2 on %s.",
+                device_map
+            )
+
+        # Optimize with DeepSpeed if available.
+        if torch.cuda.is_available():
+            try:
+                self._model = deepspeed.init_inference(
+                    model=self._model,
+                    dtype=torch_dtype,
+                    replace_with_kernel_inject=True
+                )
+                if self._logger.isEnabledFor(logging.INFO):
+                    self._logger.info(
+                        "DeepSpeed inference optimization enabled."
+                    )
+            except ImportError:
+                pass
+            except Exception as error:
+                self._logger.warning(
+                    "DeepSpeed optimization skipped: %s", error
+                )
 
         # Load the preprocessor.
         self._processor: Any = AutoProcessor.from_pretrained(
             "ByteDance/Dolphin-v2", use_fast=False)
         self._processor.tokenizer.padding_side = "left"
-
-        if self._logger.isEnabledFor(logging.INFO):
-            self._logger.info("Loaded the ByteDance/Dolphin-v2 processor.")
-
-        # Move the model to the GPU if CUDA is available.
-        if torch.cuda.is_available():
-            if self._logger.isEnabledFor(logging.INFO):
-                self._logger.info("The NVidia CUDA runtime was detected.")
-
-            self._model.to("cuda")  # type: ignore
-            self._model = self._model.bfloat16()  # type: ignore
-
-            if self._logger.isEnabledFor(logging.INFO):
-                self._logger.info("Moved the ByteDance/Dolphin-v2 model to "
-                                  "the accelerator memory.")
-        else:
-            if self._logger.isEnabledFor(logging.INFO):
-                self._logger.info("The NVidia CUDA runtime was not detected. "
-                                  "Using the CPU for inference.")
 
     def generate(self: Self, context: List[Message]) -> List[str]:
         """
@@ -72,7 +83,8 @@ class Dolphin:
             List of decoded model outputs, one per context.
         """
         messages: List[List[Dict[str, Any]]] = [
-            [message.model_dump()] for message in context]
+            [message.model_dump()] for message in context
+        ]
 
         # Apply the template to the text inputs.
         texts: List[str] = self._processor.apply_chat_template(
@@ -96,21 +108,22 @@ class Dolphin:
         )
         inputs = inputs.to(self._model.device)  # type: ignore
 
-        # Generate the output sequence.
-        outputs: Any = self._model.generate(  # type: ignore
-            **inputs,
-            do_sample=False,
-            max_new_tokens=4096,
-            temperature=None,
-            # repetition_penalty=1.05
-        )
-        outputs = [
-            output_ids[len(input_ids):] for input_ids, output_ids in zip(
-                inputs.input_ids, outputs)]
+        # Generate the output sequence with inference optimizations.
+        with torch.inference_mode():
+            outputs: Any = self._model.generate(  # type: ignore
+                **inputs,
+                do_sample=False,
+                max_new_tokens=4096,
+                temperature=None,
+                # repetition_penalty=1.05
+            )
+            outputs = [
+                output_ids[len(input_ids):] for input_ids, output_ids in zip(
+                    inputs.input_ids, outputs)]
 
-        # Decode the output sequence.
-        return self._processor.batch_decode(
-            outputs,
-            clean_up_tokenization_spaces=False,
-            skip_special_tokens=True
-        )
+            # Decode the output sequence.
+            return self._processor.batch_decode(
+                outputs,
+                clean_up_tokenization_spaces=False,
+                skip_special_tokens=True
+            )
