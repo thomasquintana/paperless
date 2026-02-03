@@ -30,14 +30,21 @@ class Dolphin:
         self._logger = logging.getLogger("uvicorn.error")
 
         # Load model.
-        device_map = "cuda" if torch.cuda.is_available() else "cpu"
-        torch_dtype = torch.bfloat16 if torch.cuda.is_available() else "auto"
+        if torch.cuda.is_available():
+            device_map = "cuda"
+            torch_dtype = torch.bfloat16
+            attn_implementation = "flash_attention_2"
+        else:
+            device_map = "cpu"
+            torch_dtype = torch.float32
+            attn_implementation = "eager"
 
         self._model: Qwen2_5_VLForConditionalGeneration | InferenceEngine = \
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 "ByteDance/Dolphin-v2",
                 device_map=device_map,
-                torch_dtype=torch_dtype
+                torch_dtype=torch_dtype,
+                attn_implementation=attn_implementation
             )
         self._model.eval()  # type: ignore
 
