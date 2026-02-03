@@ -325,6 +325,14 @@ class OpticalCharaterRecognizer:
             processed_results: List[Dict[str, Any]], 
             output_key: Literal['codes', 'equations', 'figures', 'tables', 'text']
         ) -> None:
+            """
+            Distribute processed results back to their original pages.
+
+            Args:
+                original_queue: List of tuples containing page index and element descriptor.
+                processed_results: List of processed results.
+                output_key: Key for the output dictionary.
+            """
             for (page_idx, _), result in zip(original_queue, processed_results):
                 outputs[page_idx][output_key].append(result)
 
