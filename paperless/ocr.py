@@ -1,20 +1,5 @@
 """
 Optical Character Recognition (OCR) pipeline.
-
-This module provides a lightweight OCR orchestrator that:
-1) Renders PDF pages into images.
-2) Asks a layout/reading-order.
-3) Crops each located element ("pip" / picture-in-picture region) and routes it
-   to a specialized extractor (text, code, equations, tables, figures).
-4) Returns a normalized list of OCR results with labels, bounding boxes,
-   reading order, tags, and extracted text (or base64 image data for figures).
-
-Design notes:
-- Layout parsing relies on `parse_layout_string(...)` and may fail on malformed
-  model output; this module degrades gracefully by treating the full page as a
-  single "distorted_page" region.
-- Element crops smaller than MIN_PIP_* are ignored to reduce noise and avoid
-  pointless model calls.
 """
 from io import BytesIO
 from typing import Any, Dict, List, Literal, Optional, Self, Tuple
@@ -40,19 +25,8 @@ class OpticalCharaterRecognizer:
     """
     OCR orchestrator.
 
-    The class is responsible for:
-    - Batch prompting the model for layout, reading order, and content
-        extraction.
-    - Routing cropped regions to the right extraction prompt based on label.
-    - Returning results in a consistent JSON-like schema.
-
-    Each output dict includes:
-      - label: detected semantic type (e.g., "code", "equ", "fig", "tab",
-        "text")
-      - bbox: [x1, y1, x2, y2] crop coordinates in page space
-      - text: extracted text, or base64 PNG for figures
-      - reading_order: integer indicating element order on the page
-      - tags: metadata tags returned by the layout parser (if any)
+    Extracts layout, reading order, and content from PDFs.
+    Returns labeled regions (code, equations, figures, tables, text) with text or base64 data.
     """
     _batch_size: int
     _model: Dolphin
@@ -62,7 +36,15 @@ class OpticalCharaterRecognizer:
         self._model: Dolphin = Dolphin()
 
     def _create_layout_message(self: Self, image: PILImage) -> Message:
-        """Create the layout parsing message for a single page."""
+        """
+        Create the layout parsing message for a single page.
+
+        Args:
+            image: Page image to process.
+
+        Returns:
+            Layout parsing message.
+        """
         return Message.model_validate({
             "role": "user",
             "content": [
@@ -84,6 +66,13 @@ class OpticalCharaterRecognizer:
     ) -> Tuple[List[Dict[str, Any]], ...]:
         """
         Parse model output and crop elements for a single page.
+
+        Args:
+            image: Page image to crop from.
+            response: Model output string containing layout information.
+
+        Returns:
+            Tuple of per-type element lists (code, equations, figures, tables, text).
         """
         layout: List[Tuple[Tuple[float, ...], str, List[str]]]
         try:
@@ -137,7 +126,14 @@ class OpticalCharaterRecognizer:
         type_prompt: str
     ) -> List[Dict[str, Any]]:
         """
-        Generic extractor for text-based content (code, equations, tables, text).
+        Generic extractor for text-based content.
+
+        Args:
+            elements: List of element descriptors to extract text from.
+            type_prompt: The prompt text to send to the model.
+
+        Returns:
+            List of normalized OCR outputs.
         """
         if not elements:
             return []
@@ -172,7 +168,13 @@ class OpticalCharaterRecognizer:
         elements: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Extract figures as base64-encoded PNG images. (No model inference)
+        Extract figures as base64-encoded PNG images.
+
+        Args:
+            elements: List of element descriptors to process.
+
+        Returns:
+            List of normalized outputs with base64 encoded images.
         """
         outputs: List[Dict[str, Any]] = []
         for element in elements:
@@ -196,6 +198,13 @@ class OpticalCharaterRecognizer:
     ) -> List[str]:
         """
         Run generation on a list of messages, optionally batched.
+
+        Args:
+            messages: List of messages to process.
+            batch_size: Optional batch size override.
+
+        Returns:
+            List of generated strings.
         """
         outputs: List[str] = []
 
@@ -224,14 +233,14 @@ class OpticalCharaterRecognizer:
                                        'text']]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Perform OCR over every page in a PDF document using global batching.
+        Perform OCR over every page in a PDF document.
 
         Args:
-            pdf: A PortableDocumentFormat wrapper.
-            exclude: A list of page elements to exclude from the results.
+            pdf: PDF document wrapper.
+            exclude: Optional list of element types to exclude.
 
         Returns:
-            List of OCR results across all pages.
+            List of OCR results per page.
         """
         if exclude is None:
             exclude = []
@@ -240,8 +249,7 @@ class OpticalCharaterRecognizer:
         for image in images:
             check_dimensions(image)
 
-        # --- Stage 1: Global Layout Detection ---
-        # Generate layout prompts for ALL pages at once.
+        # Stage 1: Global Layout Detection
         layout_messages: List[Message] = [self._create_layout_message(img) for img in images]
         
         # Run inference in batches (controlled by self.batch_size).
@@ -252,11 +260,7 @@ class OpticalCharaterRecognizer:
         for image, response in zip(images, layout_responses):
             all_page_elements.append(self._process_layout_response(image, response))
 
-        # --- Stage 2: Global Content Extraction ---
-        # Flatten all elements of a specific type across ALL pages.
-        # We need to keep track of which page they belong to for reconstruction.
-        
-        # Structure: type -> list of (page_index, element_dict)
+        # Stage 2: Global Content Extraction
         type_queues: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {
             'code': [],
             'equ': [],
@@ -265,8 +269,7 @@ class OpticalCharaterRecognizer:
             'text': []
         }
 
-        # index mapping from _process_layout_response return tuple to type keys
-        # 0: code, 1: equ, 2: fig, 3: tab, 4: text
+        # index mapping: 0:code, 1:equ, 2:fig, 3:tab, 4:text
         tuple_idx_to_key: Dict[int, Literal['code', 'equ', 'fig', 'tab', 'text']] = {
             0: 'code', 1: 'equ', 2: 'fig', 3: 'tab', 4: 'text'
         }
@@ -285,19 +288,18 @@ class OpticalCharaterRecognizer:
                     type_queues[key].append((page_idx, elem))
 
         # Run batch inference for each type
-        # Code
         code_input: List[Dict[str, Any]] = [item[1] for item in type_queues['code']]
         code_results: List[Dict[str, Any]] = self._extract_content(code_input, "Read code in the image.")
         
-        # Equations
+
         equ_input: List[Dict[str, Any]] = [item[1] for item in type_queues['equ']]
         equ_results: List[Dict[str, Any]] = self._extract_content(equ_input, "Read formula in the image.")
         
-        # Tables
+
         tab_input: List[Dict[str, Any]] = [item[1] for item in type_queues['tab']]
         tab_results: List[Dict[str, Any]] = self._extract_content(tab_input, "Parse the table in the image.")
         
-        # Text
+
         text_input: List[Dict[str, Any]] = [item[1] for item in type_queues['text']]
         text_results: List[Dict[str, Any]] = self._extract_content(text_input, "Read text in the image.")
 
