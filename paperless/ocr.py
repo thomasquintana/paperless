@@ -321,8 +321,8 @@ class OpticalCharaterRecognizer:
         def distribute_results(
             original_queue: List[Tuple[int, Dict[str, Any]]], 
             processed_results: List[Dict[str, Any]], 
-            output_key: str
-        ):
+            output_key: Literal['codes', 'equations', 'figures', 'tables', 'text']
+        ) -> None:
             for (page_idx, _), result in zip(original_queue, processed_results):
                 outputs[page_idx][output_key].append(result)
 
