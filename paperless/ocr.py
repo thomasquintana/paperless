@@ -54,225 +54,16 @@ class OpticalCharaterRecognizer:
       - reading_order: integer indicating element order on the page
       - tags: metadata tags returned by the layout parser (if any)
     """
+    _batch_size: int
     _model: Dolphin
 
-    def __init__(self: Self) -> None:
-        self._model = Dolphin()
+    def __init__(self: Self, batch_size: int = 32) -> None:
+        self._batch_size: int = batch_size
+        self._model: Dolphin = Dolphin()
 
-    def _extract_codes(
-        self: Self,
-        elements: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract source code text from a list of cropped "code" elements.
-
-        Args:
-            elements: List of element descriptors, each containing:
-                - image (PILImage): cropped region
-                - label (str)
-                - bbox (List[float|int])
-                - reading_order (int)
-                - tags (List[str])
-
-        Returns:
-            List of normalized OCR outputs for code regions.
-        """
-        messages: List[Message] = [Message.model_validate({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": element["image"],
-                },
-                {
-                    "type": "text",
-                    "text": "Read code in the image."
-                }
-            ]
-        }) for element in elements]
-
-        outputs: List[str] = self._prompt(messages)
-
-        return [{
-            "label": element["label"],
-            "bbox": element["bbox"],
-            "text": output.strip(),
-            "reading_order": element["reading_order"],
-            "tags": element["tags"]
-        } for element, output in zip(elements, outputs)]
-
-    def _extract_equations(
-        self: Self,
-        elements: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract mathematical formulas/equations from cropped "equ" elements.
-
-        Args:
-            elements: List of element descriptors (see _extract_codes).
-
-        Returns:
-            List of normalized OCR outputs for equation regions.
-        """
-        messages: List[Message] = [Message.model_validate({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": element["image"],
-                },
-                {
-                    "type": "text",
-                    "text": "Read formula in the image."
-                }
-            ]
-        }) for element in elements]
-
-        outputs: List[str] = self._prompt(messages)
-
-        return [{
-            "label": element["label"],
-            "bbox": element["bbox"],
-            "text": output.strip(),
-            "reading_order": element["reading_order"],
-            "tags": element["tags"]
-        } for element, output in zip(elements, outputs)]
-
-    def _extract_figures(
-        self: Self,
-        elements: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract figures as base64-encoded PNG images.
-
-        Figures are not OCR'd to text here. Instead, the cropped image is
-        serialized as PNG bytes and returned as base64 text so downstream
-        consumers can store/transmit it as JSON.
-
-        Args:
-            elements: List of element descriptors (see _extract_codes).
-
-        Returns:
-            List of normalized outputs where "text" is base64 PNG data.
-        """
-        outputs: List[Dict[str, Any]] = []
-        for element in elements:
-            buffer: BytesIO = BytesIO()
-            element["image"].save(buffer, format='PNG')
-            image: bytes = buffer.getvalue()
-            text: str = base64.b64encode(image).decode('utf-8')
-            outputs.append({
-                "label": element["label"],
-                "bbox": element["bbox"],
-                "text": text,
-                "reading_order": element["reading_order"],
-                "tags": element["tags"]
-            })
-        return outputs
-
-    def _extract_tables(
-        self: Self,
-        elements: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract structured table content from cropped "tab" elements.
-
-        Args:
-            elements: List of element descriptors (see _extract_codes).
-
-        Returns:
-            List of normalized OCR outputs for table regions.
-        """
-        messages: List[Message] = [Message.model_validate({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": element["image"],
-                },
-                {
-                    "type": "text",
-                    "text": "Parse the table in the image."
-                }
-            ]
-        }) for element in elements]
-
-        outputs: List[str] = self._prompt(messages)
-
-        return [{
-            "label": element["label"],
-            "bbox": element["bbox"],
-            "text": output.strip(),
-            "reading_order": element["reading_order"],
-            "tags": element["tags"]
-        } for element, output in zip(elements, outputs)]
-
-    def _extract_text(
-        self: Self,
-        elements: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract plain text from cropped elements.
-
-        Args:
-            elements: List of element descriptors (see _extract_codes).
-
-        Returns:
-            List of normalized OCR outputs for text regions.
-        """
-        messages: List[Message] = [Message.model_validate({
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "image": element["image"],
-                },
-                {
-                    "type": "text",
-                    "text": "Read text in the image."
-                }
-            ]
-        }) for element in elements]
-
-        outputs: List[str] = self._prompt(messages)
-
-        return [{
-            "label": element["label"],
-            "bbox": element["bbox"],
-            "text": output.strip(),
-            "reading_order": element["reading_order"],
-            "tags": element["tags"]
-        } for element, output in zip(elements, outputs)]
-
-    def _locate_elements(
-        self: Self,
-        image: PILImage
-    ) -> Tuple[List[Dict[str, Any]], ...]:
-        """
-        Identify and crop page elements, returning per-type element groups.
-
-        This is a two-stage process:
-        1) Page-level: Prompt the model for reading order / layout
-            serialization.
-        2) Element-level: Crop each region, filter by size, and route into
-            lists.
-
-        Args:
-            image: Full page image.
-
-        Returns:
-            Tuple of element lists in this fixed order:
-                (code_elements, equation_elements, figure_elements,
-                 table_elements, text_elements)
-
-            Each element descriptor contains:
-                - image (PILImage): cropped region
-                - label (str): element label from layout parser
-                - bbox (List[float|int]): [x1, y1, x2, y2]
-                - reading_order (int): stable order assigned during iteration
-                - tags (List[str]): metadata tags from layout parser
-        """
-        message: Message = Message.model_validate({
+    def _create_layout_message(self: Self, image: PILImage) -> Message:
+        """Create the layout parsing message for a single page."""
+        return Message.model_validate({
             "role": "user",
             "content": [
                 {
@@ -281,22 +72,26 @@ class OpticalCharaterRecognizer:
                 },
                 {
                     "type": "text",
-                    "text": "Parse the reading order of this "
-                            "document."
+                    "text": "Parse the reading order of this document."
                 }
             ]
         })
+
+    def _process_layout_response(
+        self: Self,
+        image: PILImage,
+        response: str
+    ) -> Tuple[List[Dict[str, Any]], ...]:
+        """
+        Parse model output and crop elements for a single page.
+        """
         layout: List[Tuple[Tuple[float, ...], str, List[str]]]
         try:
-            layout = parse_layout_string(
-                self._prompt([message])[0])
+            layout = parse_layout_string(response)
         except ValueError as error:
             layout = [((0, 0, *image.size), 'distorted_page', [])]
-
-            # Log bad parts.
             logging.warning(error)
 
-        # Stage 2: Element-level content parsing.
         code_elements: List[Dict[str, Any]] = []
         equation_elements: List[Dict[str, Any]] = []
         figure_elements: List[Dict[str, Any]] = []
@@ -336,6 +131,64 @@ class OpticalCharaterRecognizer:
             text_elements
         )
 
+    def _extract_content(
+        self: Self,
+        elements: List[Dict[str, Any]],
+        type_prompt: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Generic extractor for text-based content (code, equations, tables, text).
+        """
+        if not elements:
+            return []
+
+        messages: List[Message] = [Message.model_validate({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": element["image"],
+                },
+                {
+                    "type": "text",
+                    "text": type_prompt
+                }
+            ]
+        }) for element in elements]
+
+        # Use the stored batch size for inference.
+        outputs: List[str] = self._prompt(messages, batch_size=self._batch_size)
+
+        return [{
+            "label": element["label"],
+            "bbox": element["bbox"],
+            "text": output.strip(),
+            "reading_order": element["reading_order"],
+            "tags": element["tags"]
+        } for element, output in zip(elements, outputs)]
+
+    def _extract_figures(
+        self: Self,
+        elements: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract figures as base64-encoded PNG images. (No model inference)
+        """
+        outputs: List[Dict[str, Any]] = []
+        for element in elements:
+            buffer: BytesIO = BytesIO()
+            element["image"].save(buffer, format='PNG')
+            image: bytes = buffer.getvalue()
+            text: str = base64.b64encode(image).decode('utf-8')
+            outputs.append({
+                "label": element["label"],
+                "bbox": element["bbox"],
+                "text": text,
+                "reading_order": element["reading_order"],
+                "tags": element["tags"]
+            })
+        return outputs
+
     def _prompt(
         self: Self,
         messages: List[Message],
@@ -343,18 +196,6 @@ class OpticalCharaterRecognizer:
     ) -> List[str]:
         """
         Run generation on a list of messages, optionally batched.
-
-        Args:
-            messages: Model-ready Message objects.
-            batch_size: Number of messages per batch. If None, uses all
-                messages in one batch.
-
-        Returns:
-            List of model outputs (one string per input message).
-
-        Notes:
-            Batching is useful to control memory usage and latency behavior
-            depending on your hardware/backend.
         """
         outputs: List[str] = []
 
@@ -368,7 +209,6 @@ class OpticalCharaterRecognizer:
         # Process the messages in batches.
         for index in range(0, len(messages), batch_size):
             batch = messages[index:index + batch_size]
-
             output: List[str] = self._model.generate(batch)
             outputs.extend(output)
 
@@ -384,54 +224,110 @@ class OpticalCharaterRecognizer:
                                        'text']]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Perform OCR over every page in a PDF document.
-
-        For each page image:
-          1) Validate image dimensions (guard rails).
-          2) Locate elements via page-level layout prompt.
-          3) Extract each element type with specialized prompts.
-          4) Aggregate results into one list.
+        Perform OCR over every page in a PDF document using global batching.
 
         Args:
-            pdf: A PortableDocumentFormat wrapper capable of rendering pages
-                into images.
+            pdf: A PortableDocumentFormat wrapper.
             exclude: A list of page elements to exclude from the results.
 
         Returns:
             List of OCR results across all pages.
         """
-        outputs: List[Dict[str, Any]] = []
+        if exclude is None:
+            exclude = []
 
         images: List[PILImage] = pdf.to_images()
-        for index, image in enumerate(images):
+        for image in images:
             check_dimensions(image)
 
-            # Stage 1: Locate the elements of interest in the document.
-            elements: Tuple[List[Dict[str, Any]], ...] = self._locate_elements(
-                image)
+        # --- Stage 1: Global Layout Detection ---
+        # Generate layout prompts for ALL pages at once.
+        layout_messages = [self._create_layout_message(img) for img in images]
+        
+        # Run inference in batches (controlled by self.batch_size).
+        layout_responses = self._prompt(layout_messages, batch_size=self._batch_size)
 
-            # Stage 2: Process the elements.
-            if exclude is None:
-                exclude = []
+        # Process responses to get elements for each page.
+        all_page_elements: List[Tuple[List[Dict[str, Any]], ...]] = []
+        for image, response in zip(images, layout_responses):
+            all_page_elements.append(self._process_layout_response(image, response))
 
-            code: List[Dict[str, Any]] = self._extract_codes(
-                elements[0]) if 'code' not in exclude else []
-            equations: List[Dict[str, Any]] = self._extract_equations(
-                elements[1]) if 'equations' not in exclude else []
-            figures: List[Dict[str, Any]] = self._extract_figures(
-                elements[2]) if 'figures' not in exclude else []
-            tables: List[Dict[str, Any]] = self._extract_tables(
-                elements[3]) if 'tables' not in exclude else []
-            text: List[Dict[str, Any]] = self._extract_text(
-                elements[4]) if 'text' not in exclude else []
+        # --- Stage 2: Global Content Extraction ---
+        # Flatten all elements of a specific type across ALL pages.
+        # We need to keep track of which page they belong to for reconstruction.
+        
+        # Structure: type -> list of (page_index, element_dict)
+        type_queues: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {
+            'code': [],
+            'equ': [],
+            'fig': [],
+            'tab': [],
+            'text': []
+        }
 
-            outputs.append({
-                "page": index + 1,
-                "codes": code,
-                "equations": equations,
-                "figures": figures,
-                "tables": tables,
-                "text": text
-            })
+        # index mapping from _process_layout_response return tuple to type keys
+        # 0: code, 1: equ, 2: fig, 3: tab, 4: text
+        tuple_idx_to_key = {0: 'code', 1: 'equ', 2: 'fig', 3: 'tab', 4: 'text'}
+
+        for page_idx, page_elems in enumerate(all_page_elements):
+            for tuple_idx, elem_list in enumerate(page_elems):
+                key = tuple_idx_to_key[tuple_idx]
+                # Filter exclusions early
+                if key == 'code' and 'code' in exclude: continue
+                if key == 'equ' and 'equations' in exclude: continue
+                if key == 'fig' and 'figures' in exclude: continue
+                if key == 'tab' and 'tables' in exclude: continue
+                if key == 'text' and 'text' in exclude: continue
+
+                for elem in elem_list:
+                    type_queues[key].append((page_idx, elem))
+
+        # Run batch inference for each type
+        # Code
+        code_input = [item[1] for item in type_queues['code']]
+        code_results = self._extract_content(code_input, "Read code in the image.")
+        
+        # Equations
+        equ_input = [item[1] for item in type_queues['equ']]
+        equ_results = self._extract_content(equ_input, "Read formula in the image.")
+        
+        # Tables
+        tab_input = [item[1] for item in type_queues['tab']]
+        tab_results = self._extract_content(tab_input, "Parse the table in the image.")
+        
+        # Text
+        text_input = [item[1] for item in type_queues['text']]
+        text_results = self._extract_content(text_input, "Read text in the image.")
+
+        # Figures (no inference)
+        fig_input = [item[1] for item in type_queues['fig']]
+        fig_results = self._extract_figures(fig_input)
+
+        # Reconstruct the per-page results structure.
+        outputs: List[Dict[str, Any]] = [
+            {
+                "page": i + 1,
+                "codes": [],
+                "equations": [],
+                "figures": [],
+                "tables": [],
+                "text": []
+            } 
+            for i in range(len(images))
+        ]
+
+        def distribute_results(
+            original_queue: List[Tuple[int, Dict[str, Any]]], 
+            processed_results: List[Dict[str, Any]], 
+            output_key: str
+        ):
+            for (page_idx, _), result in zip(original_queue, processed_results):
+                outputs[page_idx][output_key].append(result)
+
+        distribute_results(type_queues['code'], code_results, 'codes')
+        distribute_results(type_queues['equ'], equ_results, 'equations')
+        distribute_results(type_queues['fig'], fig_results, 'figures')
+        distribute_results(type_queues['tab'], tab_results, 'tables')
+        distribute_results(type_queues['text'], text_results, 'text')
 
         return outputs

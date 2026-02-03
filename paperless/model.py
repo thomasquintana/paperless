@@ -31,8 +31,16 @@ class Dolphin:
 
         # Load model.
         if torch.cuda.is_available():
+            # Enable TF32 for faster FP32 operations (e.g. internal accumulations).
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
             device_map = "cuda"
-            torch_dtype = torch.bfloat16
+            # Check if the GPU supports bfloat16 (Ampere or newer).
+            if torch.cuda.is_bf16_supported():
+                torch_dtype = torch.bfloat16
+            else:
+                torch_dtype = torch.float16
             attn_implementation = "flash_attention_2"
         else:
             device_map = "cpu"
