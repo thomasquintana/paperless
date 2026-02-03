@@ -401,6 +401,7 @@ class OpticalCharaterRecognizer:
             List of OCR results across all pages.
         """
         outputs: List[Dict[str, Any]] = []
+
         images: List[PILImage] = pdf.to_images()
         for index, image in enumerate(images):
             check_dimensions(image)
