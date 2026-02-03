@@ -242,10 +242,10 @@ class OpticalCharaterRecognizer:
 
         # --- Stage 1: Global Layout Detection ---
         # Generate layout prompts for ALL pages at once.
-        layout_messages = [self._create_layout_message(img) for img in images]
+        layout_messages: List[Message] = [self._create_layout_message(img) for img in images]
         
         # Run inference in batches (controlled by self.batch_size).
-        layout_responses = self._prompt(layout_messages, batch_size=self._batch_size)
+        layout_responses: List[str] = self._prompt(layout_messages, batch_size=self._batch_size)
 
         # Process responses to get elements for each page.
         all_page_elements: List[Tuple[List[Dict[str, Any]], ...]] = []
@@ -267,11 +267,13 @@ class OpticalCharaterRecognizer:
 
         # index mapping from _process_layout_response return tuple to type keys
         # 0: code, 1: equ, 2: fig, 3: tab, 4: text
-        tuple_idx_to_key = {0: 'code', 1: 'equ', 2: 'fig', 3: 'tab', 4: 'text'}
+        tuple_idx_to_key: Dict[int, Literal['code', 'equ', 'fig', 'tab', 'text']] = {
+            0: 'code', 1: 'equ', 2: 'fig', 3: 'tab', 4: 'text'
+        }
 
         for page_idx, page_elems in enumerate(all_page_elements):
             for tuple_idx, elem_list in enumerate(page_elems):
-                key = tuple_idx_to_key[tuple_idx]
+                key: Literal['code', 'equ', 'fig', 'tab', 'text'] = tuple_idx_to_key[tuple_idx]
                 # Filter exclusions early
                 if key == 'code' and 'code' in exclude: continue
                 if key == 'equ' and 'equations' in exclude: continue
@@ -284,24 +286,24 @@ class OpticalCharaterRecognizer:
 
         # Run batch inference for each type
         # Code
-        code_input = [item[1] for item in type_queues['code']]
-        code_results = self._extract_content(code_input, "Read code in the image.")
+        code_input: List[Dict[str, Any]] = [item[1] for item in type_queues['code']]
+        code_results: List[Dict[str, Any]] = self._extract_content(code_input, "Read code in the image.")
         
         # Equations
-        equ_input = [item[1] for item in type_queues['equ']]
-        equ_results = self._extract_content(equ_input, "Read formula in the image.")
+        equ_input: List[Dict[str, Any]] = [item[1] for item in type_queues['equ']]
+        equ_results: List[Dict[str, Any]] = self._extract_content(equ_input, "Read formula in the image.")
         
         # Tables
-        tab_input = [item[1] for item in type_queues['tab']]
-        tab_results = self._extract_content(tab_input, "Parse the table in the image.")
+        tab_input: List[Dict[str, Any]] = [item[1] for item in type_queues['tab']]
+        tab_results: List[Dict[str, Any]] = self._extract_content(tab_input, "Parse the table in the image.")
         
         # Text
-        text_input = [item[1] for item in type_queues['text']]
-        text_results = self._extract_content(text_input, "Read text in the image.")
+        text_input: List[Dict[str, Any]] = [item[1] for item in type_queues['text']]
+        text_results: List[Dict[str, Any]] = self._extract_content(text_input, "Read text in the image.")
 
         # Figures (no inference)
-        fig_input = [item[1] for item in type_queues['fig']]
-        fig_results = self._extract_figures(fig_input)
+        fig_input: List[Dict[str, Any]] = [item[1] for item in type_queues['fig']]
+        fig_results: List[Dict[str, Any]] = self._extract_figures(fig_input)
 
         # Reconstruct the per-page results structure.
         outputs: List[Dict[str, Any]] = [
