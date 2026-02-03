@@ -252,7 +252,7 @@ class OpticalCharaterRecognizer:
         # Stage 1: Global Layout Detection
         layout_messages: List[Message] = [self._create_layout_message(img) for img in images]
         
-        # Run inference in batches (controlled by self.batch_size).
+        # Run inference in batches.
         layout_responses: List[str] = self._prompt(layout_messages, batch_size=self._batch_size)
 
         # Process responses to get elements for each page.
@@ -269,7 +269,7 @@ class OpticalCharaterRecognizer:
             'text': []
         }
 
-        # index mapping: 0:code, 1:equ, 2:fig, 3:tab, 4:text
+        # Index mapping.
         tuple_idx_to_key: Dict[int, Literal['code', 'equ', 'fig', 'tab', 'text']] = {
             0: 'code', 1: 'equ', 2: 'fig', 3: 'tab', 4: 'text'
         }
