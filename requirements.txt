@@ -1,6 +1,8 @@
 accelerate==1.4.0
 boto3==1.42.34
+deepspeed==0.18.5
 fastapi==0.128.0
+flash-attn==2.8.3
 pymupdf==1.26
 qwen-vl-utils==0.0.14
 requests==2.32.5
