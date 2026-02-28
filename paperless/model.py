@@ -9,6 +9,7 @@ import logging
 from deepspeed import InferenceEngine  # type: ignore
 from PIL.Image import Image as PILImage
 from qwen_vl_utils import process_vision_info  # type: ignore
+from torch import dtype
 from transformers import AutoProcessor  # type: ignore
 from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
 
@@ -30,8 +31,17 @@ class Dolphin:
         self._logger = logging.getLogger("uvicorn.error")
 
         # Load model.
-        if torch.cuda.is_available():
-            # Enable TF32 for faster FP32 operations (e.g. internal accumulations).
+        device_map: str = "cpu"
+        torch_dtype: dtype = torch.float32
+        attn_implementation: str = "eager"
+        if torch.backends.mps.is_available():
+            self._logger.info("Using MPS (Apple Silicon GPU)")
+            device_map = "mps"
+            torch_dtype = torch.float16
+        elif torch.cuda.is_available():
+            self._logger.info("Using CUDA (NVidia GPU)")
+            # Enable TF32 for faster FP32 operations
+            # (e.g. internal accumulations).
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
 
@@ -43,9 +53,7 @@ class Dolphin:
                 torch_dtype = torch.float16
             attn_implementation = "flash_attention_2"
         else:
-            device_map = "cpu"
-            torch_dtype = torch.float32
-            attn_implementation = "eager"
+            self._logger.info("Using CPU")
 
         self._model: Qwen2_5_VLForConditionalGeneration | InferenceEngine = \
             Qwen2_5_VLForConditionalGeneration.from_pretrained(
